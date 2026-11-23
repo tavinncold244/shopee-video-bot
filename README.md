@@ -30,10 +30,14 @@ Descobrimos testando ao vivo que:
 
 Conclusão: pra automatizar de ponta a ponta, precisa rodar o app Shopee dentro
 de um emulador Android (BlueStacks, LDPlayer) ou um celular real com ADB, e
-automatizar por `uiautomator2`. Isso NÃO foi testado ainda neste repo —
-`src/upload_mobile.py` é um esqueleto com os passos mapeados mas os seletores
-de tela (resourceId/texto dos botões) precisam ser ajustados inspecionando o
-app de verdade.
+automatizar por `uiautomator2`. Como ninguém mapeou os botões reais do app
+ainda, em vez de chutar seletores que quase certamente estariam errados,
+`src/map_upload_flow.py` é uma ferramenta interativa: ela conecta no
+device, mostra os elementos clicáveis na tela numerados, e você vai
+clicando/digitando pelo terminal enquanto ela grava cada passo. No final
+(`done`), isso fica salvo em `data/posted/recorded_flow.json`, e
+`src/upload_mobile.py` reproduz esse fluxo gravado pra todos os vídeos
+pendentes em lote.
 
 ## Setup no notebook
 
@@ -59,7 +63,12 @@ python src/collect_sources.py
 # 2. Baixar + editar (marca d'água borrada + nossa marca aplicada)
 python src/download_and_edit.py
 
-# 3. Publicar (AINDA EM DESENVOLVIMENTO - ver aviso acima)
+# 3. Mapear o fluxo de upload UMA VEZ, ao vivo no emulador/celular
+#    (siga o menu interativo: s=screenshot/listar botões, c <n>=clicar,
+#    type <texto>=digitar, push <arquivo>=enviar vídeo, done=salvar fluxo)
+python src/map_upload_flow.py
+
+# 4. Publicar em lote, reproduzindo o fluxo mapeado no passo 3
 python src/upload_mobile.py
 ```
 
@@ -75,10 +84,12 @@ python src/upload_mobile.py
 1. Instalar emulador Android no notebook (BlueStacks ou LDPlayer — LDPlayer
    consome menos RAM, recomendado se a máquina for fraca).
 2. Logar no app Shopee manualmente 1 vez dentro do emulador.
-3. Usar `weditor` (ferramenta do uiautomator2) pra inspecionar a tela de
-   upload de vídeo do app e pegar os `resourceId`/textos reais dos botões.
-4. Preencher os `TODO`s em `src/upload_mobile.py` com esses seletores.
-5. Testar com 1-2 vídeos antes de rodar em lote.
+3. Rodar `python src/map_upload_flow.py` e mapear o caminho completo:
+   abrir app → Live & Vídeo → + → selecionar vídeo (usar `push`) → legenda
+   → adicionar produto → publicar. Digite `done` no final pra salvar.
+4. Rodar `python src/upload_mobile.py` pra reproduzir esse fluxo em lote
+   pra todos os vídeos pendentes.
+5. Testar com 1-2 vídeos antes de rodar o lote inteiro.
 
 ## Avisos importantes
 

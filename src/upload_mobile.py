@@ -1,28 +1,15 @@
 """
-ESQUELETO (ainda NAO TESTADO) de automacao do upload no app Shopee via
-uiautomator2 (ADB), para rodar contra um emulador Android (BlueStacks, LDPlayer)
-ou celular real com depuracao USB habilitada.
+Reproduz um fluxo de upload JA MAPEADO (gravado por src/map_upload_flow.py)
+pra automatizar a postagem de videos no app Shopee, em lote.
 
-Por que isso existe: o upload de video de AFILIADO no Shopee Video so
-funciona pelo aplicativo de celular (confirmado testando o site -- o portal
-affiliate.shopee.com.br nao tem opcao de video, e o upload via Central do
-Vendedor so aceita produtos da propria loja).
+Se voce ainda nao mapeou o fluxo, rode primeiro:
+    python src/map_upload_flow.py
+e siga o menu interativo pra descobrir os passos certos (abrir app, ir pra
+Live & Video, selecionar video, preencher legenda, adicionar produto,
+publicar). Isso grava em data/posted/recorded_flow.json.
 
-COMO USAR (resumo):
-1. pip install uiautomator2
-2. Conecte o emulador/celular: `adb devices` deve listar um device.
-3. Abra o app Shopee manualmente e faca login uma vez (so precisa 1x,
-   a sessao fica salva no emulador).
-4. Ajuste os seletores abaixo (resource_id/texto) inspecionando o app
-   com `python -m uiautomator2 app-info` ou `weditor` (ferramenta do
-   uiautomator2 pra inspecionar elementos na tela, tipo um "DevTools"
-   pro Android).
-5. Rode este script.
-
-Os seletores abaixo sao CHUTES EDUCADOS baseados no fluxo visto no site
-(Live & Video -> Vídeo -> Enviar Vídeo -> Legenda/Hashtags -> Produto ->
-Publicar). Quase certamente vao precisar de ajuste depois de inspecionar
-o app de verdade -- rode passo a passo e corrija o que nao bater.
+Depois de mapeado, este script repete os mesmos passos pra cada video
+pendente em data/ready/.
 """
 import json
 import time
@@ -33,66 +20,75 @@ import uiautomator2 as u2
 ROOT = Path(__file__).parent.parent
 CONFIG_PATH = ROOT / "config.json"
 READY_DIR = ROOT / "data" / "ready"
-POSTED_DIR = ROOT / "data" / "posted"
+FLOW_PATH = ROOT / "data" / "posted" / "recorded_flow.json"
+POSTED_LOG = ROOT / "data" / "posted" / "posted_log.json"
 
 
-def connect():
-    # device() sem argumento conecta no unico device USB/emulador disponivel
-    return u2.connect()
+def load_flow():
+    if not FLOW_PATH.exists():
+        raise SystemExit(
+            "Nenhum fluxo mapeado ainda. Rode primeiro:\n"
+            "  python src/map_upload_flow.py\n"
+            "e siga o menu interativo pra descobrir os passos certos no app."
+        )
+    data = json.loads(FLOW_PATH.read_text(encoding="utf-8"))
+    return data[-1]["steps"]  # usa o ultimo fluxo gravado
 
 
-def push_video_to_device(d, local_path: Path) -> str:
-    """Envia o video pro armazenamento do Android (pasta Movies/Download)."""
-    remote_path = f"/sdcard/Movies/{local_path.name}"
-    d.push(str(local_path), remote_path)
-    # faz o Android "ver" o arquivo novo na galeria
-    d.shell(
-        f'am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://{remote_path}'
-    )
-    return remote_path
-
-
-def open_shopee_video_upload(d):
-    d.app_start("com.shopee.br", stop=True)
-    time.sleep(4)
-    # TODO: ajustar - navegar ate "Eu" -> "Live & Video" -> "+"
-    # Exemplo de como seria com texto visivel (ajustar apos inspecionar):
-    # d(text="Eu").click(); time.sleep(1)
-    # d(text="Live & Video").click(); time.sleep(1)
-    # d(description="Criar").click(); time.sleep(1)
-    raise NotImplementedError(
-        "Navegacao ate a tela de upload ainda precisa ser mapeada no app real."
-    )
-
-
-def upload_one(d, video_path: Path, caption: str):
-    remote = push_video_to_device(d, video_path)
-    # TODO: dentro do seletor de galeria do app, selecionar o video recem-enviado
-    # TODO: preencher legenda: d(resourceId="...caption...").set_text(caption)
-    # TODO: adicionar produto (buscar por termo relacionado ao nicho)
-    # TODO: tocar em "Publicar"
-    raise NotImplementedError("Fluxo de preenchimento/publicacao ainda precisa ser mapeado.")
+def replay_step(d, step, video_filename, caption):
+    action = step["action"]
+    if action == "click":
+        target = step["target"]
+        if target.get("resourceId"):
+            d(resourceId=target["resourceId"]).click()
+        elif target.get("text"):
+            d(text=target["text"]).click()
+    elif action == "click_text":
+        d(textContains=step["text"]).click()
+    elif action == "type":
+        # substitui placeholder {CAPTION} pela legenda real de cada video
+        text = step["text"].replace("{CAPTION}", caption)
+        d.send_keys(text)
+    elif action == "back":
+        d.press("back")
+    elif action == "push_video":
+        remote = f"/sdcard/Movies/{video_filename}"
+        local = READY_DIR / video_filename
+        d.push(str(local), remote)
+        d.shell(f"am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://{remote}")
+    time.sleep(1.5)  # da tempo da UI reagir entre passos
 
 
 def main():
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     hashtags = " ".join(config["hashtags"])
+    steps = load_flow()
 
-    d = connect()
+    posted = set()
+    if POSTED_LOG.exists():
+        posted = set(json.loads(POSTED_LOG.read_text(encoding="utf-8")))
+
+    d = u2.connect()
     print("Device conectado:", d.info)
 
     videos = sorted(READY_DIR.glob("*.mp4"))
-    print(f"{len(videos)} videos prontos para postar")
+    pendentes = [v for v in videos if v.name not in posted]
+    print(f"{len(pendentes)} video(s) pendente(s) de {len(videos)} total")
 
-    for v in videos:
-        caption = f"Olha esse achado incrivel! 🔥 {hashtags}"
+    for v in pendentes:
+        caption = f"Olha esse achado incrivel! \U0001F525 {hashtags}"
+        print(f"\nPostando: {v.name}")
         try:
-            open_shopee_video_upload(d)
-            upload_one(d, v, caption)
-            print("Publicado:", v.name)
-        except NotImplementedError as e:
-            print(f"[PENDENTE DE MAPEAMENTO] {v.name}: {e}")
-            break  # para no primeiro, ja que o fluxo ainda nao esta pronto
+            for step in steps:
+                replay_step(d, step, v.name, caption)
+            posted.add(v.name)
+            POSTED_LOG.parent.mkdir(parents=True, exist_ok=True)
+            POSTED_LOG.write_text(json.dumps(sorted(posted), ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"OK: {v.name} publicado.")
+        except Exception as e:
+            print(f"FALHOU em {v.name}: {e}")
+            print("Pare e confira a tela do emulador antes de continuar.")
+            break
 
 
 if __name__ == "__main__":
