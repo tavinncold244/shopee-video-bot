@@ -1,0 +1,8 @@
+data/raw/
+data/ready/
+data/posted/
+*.mp4
+__pycache__/
+*.pyc
+.venv/
+venv/
